@@ -9,8 +9,6 @@ npm install
 npm start
 ```
 
-访问 ~http://localhost:3000~
-
 ## 工作流
 
 1. 推送代码到 GitHub
