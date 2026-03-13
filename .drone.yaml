@@ -1,0 +1,77 @@
+kind: pipeline
+type: kubernetes
+name: my-demo-app
+
+clone:
+  disable: true
+
+steps:
+- name: clone
+  image: alpine/git
+  commands:
+  - git clone -b ${DRONE_BRANCH} --depth 1 ${DRONE_GIT_HTTP_URL} .
+
+- name: build-and-push
+  image: docker:dind
+  volumes:
+  - name: dockersock
+    path: /var/run
+  environment:
+    DOCKER_USERNAME:
+      from_secret: docker_username
+    DOCKER_PASSWORD:
+      from_secret: docker_password
+  commands:
+  - sleep 5
+  - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+  - export VERSION=$(cat package.json | grep '"version"' | awk -F'"' '{print $4}')
+  - echo "Building version $VERSION"
+  - docker build -t ${DOCKER_USERNAME}/my-demo-app:$VERSION .
+  - docker tag ${DOCKER_USERNAME}/my-demo-app:$VERSION ${DOCKER_USERNAME}/my-demo-app:latest
+  - docker push ${DOCKER_USERNAME}/my-demo-app:$VERSION
+  - docker push ${DOCKER_USERNAME}/my-demo-app:latest
+  - echo $VERSION > /var/run/version.txt
+  when:
+    branch:
+    - main
+
+- name: update-k8s-config
+  image: bitnami/git
+  volumes:
+  - name: dockersock
+    path: /var/run
+  environment:
+    GITHUB_TOKEN:
+      from_secret: github_token
+    DOCKER_USERNAME:
+      from_secret: docker_username
+  commands:
+  - git config --global user.name "Drone CI"
+  - git config --global user.email "drone@ci.local"
+  - git clone https://${GITHUB_TOKEN}@github.com/bobo-dong/my-k8s-config.git
+  - cd my-k8s-config
+  - export VERSION=$(cat /var/run/version.txt)
+  - export IMAGE_NAME=${DOCKER_USERNAME}/my-demo-app:$VERSION
+  - sed -i "s|image:.*my-demo-app.*|image: $IMAGE_NAME|g" deployment.yaml
+  - git add .
+  - git commit -m "Update image to $VERSION [skip ci]"
+  - git push origin main
+  when:
+    branch:
+    - main
+
+services:
+- name: docker
+  image: docker:dind
+  privileged: true
+  volumes:
+  - name: dockersock
+    path: /var/run
+
+volumes:
+- name: dockersock
+  temp: {}
+
+trigger:
+  branch:
+  - main
